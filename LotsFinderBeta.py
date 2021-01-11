@@ -1,20 +1,29 @@
 import cv2 as open_cv
 import numpy as np
 import sys
-#from colors import COLOR_WHITE
-#from drawing_utils import draw_contours
+import os
+from time import gmtime, strftime
+# from colors import COLOR_WHITE
+# from drawing_utils import draw_contours
 
-class CoordinatesGenerator:
+class LotsDetector:
     KEY_RESET = ord("r")
     KEY_QUIT = ord("q")
     visited = {}
     canny = None
+    storeFolderPath = ""
     rectangels = []
-    def __init__(self, image, output):
-        sys.setrecursionlimit(10000000)
+    countFree = 0
+    countOccupated = 0
+    rawImage = None
+    def __init__(self, image, output, path):
+        os.makedirs(f'{path}/{strftime("%Y-%m-%d %H:%M:%S", gmtime())}')
+        self.storeFolderPath = f'{path}/{strftime("%Y-%m-%d %H:%M:%S", gmtime())}'
         self.output = output
         self.caption = image
         self.image = open_cv.imread(image).copy()
+        self.rawImage = self.image.copy()
+        self.testPic = self.image.copy()
         self.click_count = 0
         self.ids = 0
         self.coordinates = []
@@ -28,9 +37,9 @@ class CoordinatesGenerator:
             open_cv.imshow(self.caption, self.image)
             key = open_cv.waitKey(0)
 
-            if key == CoordinatesGenerator.KEY_RESET:
+            if key == LotsDetector.KEY_RESET:
                 self.image = self.image.copy()
-            elif key == CoordinatesGenerator.KEY_QUIT:
+            elif key == LotsDetector.KEY_QUIT:
                 break
         open_cv.destroyWindow(self.caption)
 
@@ -39,17 +48,12 @@ class CoordinatesGenerator:
         if event == open_cv.EVENT_LBUTTONDOWN:
             self.coordinates.append((x, y))
             self.click_count += 1
-            if self.click_count % 2 == 0:
-                #self.__handle_click_progress()
-                pass
-        if event == open_cv.EVENT_RBUTTONDOWN:
-            print(self.coordinates)
-            threshold1 = 100
-            threshold2 = 2500
-            self.canny = open_cv.Canny(self.image, 100, 2500, apertureSize=5)
 
-            self.dfs(self.coordinates[-1][0], self.coordinates[-1][1])
-            open_cv.imwrite("fuck.jpg", self.canny)
+        if event == open_cv.EVENT_RBUTTONDOWN:
+            blur = open_cv.blur(self.image, (6, 6))
+            self.canny = open_cv.Canny(blur, 100, 2500, apertureSize=5)
+            open_cv.imwrite(f"{self.storeFolderPath}/cannyMapImage.jpg", self.canny)
+            self.bfs(self.coordinates[-1][0], self.coordinates[-1][1])
             self.findLots()
             return
         open_cv.imshow(self.caption, self.image)
@@ -57,62 +61,80 @@ class CoordinatesGenerator:
     def __handle_click_progress(self):
         open_cv.line(self.image, self.coordinates[-1], self.coordinates[-2], (255, 0, 0), 1)
 
-    def __handle_done(self):
-        open_cv.line(self.image,
-                     self.coordinates[2],
-                     self.coordinates[3],
-                     self.color,
-                     1)
-        open_cv.line(self.image,
-                     self.coordinates[3],
-                     self.coordinates[0],
-                     self.color,
-                     1)
+    def bfs(self, vertexX, vertexY):
+        queue = [(vertexY, vertexX)]
+        while len(queue) > 0:
+            position = queue.pop()
+            if self.canny[position[0]][position[1]] != 0:
+                continue
+            if self.visited.get(position) is not None:
+                continue
+            self.visited.update({position: True})
+            try:
+                self.testPic[position[0]][position[1]] = (255, 0, 0)
+            except:
+                continue
+            if self.checkIfBorderNeer(position):
+                queue.append((position[0] + 1, position[1]))
+                queue.append((position[0] - 1, position[1]))
+                queue.append((position[0], position[1] + 1))
+                queue.append((position[0], position[1] - 1))
+        for i in range(len(self.testPic)):
+            for j in range(len(self.testPic[i])):
+                if self.testPic[i][j][0] != 255 and self.testPic[i][j][1] != 0 and self.testPic[i][j][2] != 0:
+                    self.testPic[i][j] = (0, 0, 0)
 
-        self.click_count = 0
+        open_cv.imwrite("hui.jpg", self.testPic)
 
-        coordinates = np.array(self.coordinates)
-
-        self.output.write("-\n          id: " + str(self.ids) + "\n          coordinates: [" +
-                          "[" + str(self.coordinates[0][0]) + "," + str(self.coordinates[0][1]) + "]," +
-                          "[" + str(self.coordinates[1][0]) + "," + str(self.coordinates[1][1]) + "]," +
-                          "[" + str(self.coordinates[2][0]) + "," + str(self.coordinates[2][1]) + "]," +
-                          "[" + str(self.coordinates[3][0]) + "," + str(self.coordinates[3][1]) + "]]\n")
-
-        self.ids += 1
-
-    def dfs(self, vertexX, vertexY):
-        try:
-            print(self.canny[vertexY][vertexX])
-            if self.canny[vertexY][vertexX] != 0:
-                return
-            if self.visited.get((vertexY, vertexX)) is not None:
-                return
-        except:
-            return
-        self.visited.update({(vertexY, vertexX): True})
-        self.image[vertexY][vertexX] = (255, 0, 0)
-        self.dfs(vertexX + 1, vertexY)
-        self.dfs(vertexX - 1, vertexY)
-        self.dfs(vertexX, vertexY + 1)
-        self.dfs(vertexX, vertexY - 1)
-
+    def checkIfBorderNeer(self, position):
+        for i in range(2):
+            if self.canny[position[0]][position[1] + i] != 0:
+                return False
+            if self.canny[position[0]][position[1] - i] != 0:
+                return False
+            if self.canny[position[0] + i][position[1] + i] != 0:
+                return False
+            if self.canny[position[0] - i][position[1] + i] != 0:
+                return False
+            if self.canny[position[0] + i][position[1] - i] != 0:
+                return False
+            if self.canny[position[0] - i][position[1] - i] != 0:
+                return False
+            if self.canny[position[0] - i][position[1]] != 0:
+                return False
+            if self.canny[position[0] + i][position[1]] != 0:
+                return False
+        return True
     def colorize(self, rectangle):
         min_y = min(rectangle[0][1], rectangle[1][1])
         min_x = min(rectangle[0][0], rectangle[1][0])
         max_x = max(rectangle[0][0], rectangle[1][0])
         max_y = max(rectangle[0][1], rectangle[1][1])
         total = 0
+
         for i in range(min_y, max_y):
             for j in range(min_x, max_x):
                 total += self.canny[i][j]
-        total = total / ((max_x - min_x)*(max_y - min_y))
-        print("total: ", total)
+        total = total / ((max_x - min_x) * (max_y - min_y))
+        print(min_x, max_x, min_y, max_y)
+        print(self.canny[min_y : max_y, min_x : max_x])
+
+        isOccupated = False
         if total > 7:
-            color =  (0, 0, 255)
+            self.countOccupated += 1
+            color = (0, 0, 255)
+            isOccupated = True
         else:
-            color =  (0, 255, 0)
+            self.countFree += 1
+            color = (0, 255, 0)
+
+        font = open_cv.FONT_HERSHEY_SIMPLEX
+        fontScale = 1
+        open_cv.putText(self.image, f"{total//1}", (min_x // 2 + max_x // 2, min_y // 2 + max_y// 2), font,
+                            fontScale, color, 1, open_cv.LINE_AA)
         open_cv.rectangle(self.image, (min_x, min_y), (max_x, max_y), color, 3)
+        return isOccupated
+
     def findLots(self):
         max_top = 0
         oldx_max = -1000
@@ -120,68 +142,55 @@ class CoordinatesGenerator:
         oldx_min = -1000
         listOfTopVertex = []
         listOfBottomVertex = []
-        print(1488)
         for key in self.visited:
             max_top = max(max_top, key[0])
             min_button = min(min_button, key[0])
         print(max_top)
         for key in self.visited:
             if abs(key[0] - max_top) < 20 and abs(oldx_max - key[1]) > 50:
-                #max_top = max(key[0], max_top)
                 oldx_max = key[1]
                 listOfTopVertex.append(key)
+
             if abs(key[0] - min_button) < 20 and abs(oldx_min - key[1]) > 50:
-                #min_button = min(key[0], min_button)
                 oldx_min = key[1]
                 listOfBottomVertex.append(key)
-        middley = self.coordinates[-1][1]
 
-        print(self.coordinates[-1])
+        listOfTopVertex.sort(key= lambda x: x[1])
+        listOfBottomVertex.sort(key=lambda x: x[1])
+        middleYvalue = self.coordinates[-1][1]
+        for i in range(0, len(listOfTopVertex) - 1, 1):
+            leftVertex = listOfTopVertex[i]
+            rightVertex = listOfTopVertex[i + 1]
+            self.rectangels.append(((leftVertex[1], middleYvalue), (rightVertex[1], rightVertex[0])))
 
-        for i in range(0, len(listOfTopVertex), 2):
-            try:
-                print(i)
-                fuck = listOfTopVertex[i]
-                fuck1 = listOfTopVertex[i + 1]
-                print(fuck, fuck1)
-                #open_cv.rectangle(self.image, (fuck[1], middley), (fuck1[1], fuck1[0]), (255, 0, 0), 3)
-                self.rectangels.append(((fuck[1], middley), (fuck1[1], fuck1[0])))
-            except:
-                print(i)
-                fuck = listOfTopVertex[i]
-                fuck1 = listOfTopVertex[i - 1]
-                print(fuck, fuck1)
-                #open_cv.rectangle(self.image, (fuck[1], middley), (fuck1[1], fuck1[0]), (255, 0, 0), 3)
-                self.rectangels.append(((fuck[1], middley), (fuck1[1], fuck1[0])))
-
-        for i in range(0, len(listOfBottomVertex), 2):
-            try:
-                print(i)
-                fuck = listOfBottomVertex[i]
-                fuck1 = listOfBottomVertex[i + 1]
-                print(fuck, fuck1)
-                #open_cv.rectangle(self.image, (fuck[1], middley), (fuck1[1], fuck1[0]), (255, 0, 0), 3)
-                self.rectangels.append(((fuck[1], middley), (fuck1[1], fuck1[0])))
-            except:
-                print(i)
-                fuck = listOfBottomVertex[i]
-                fuck1 = listOfBottomVertex[i - 1]
-                #open_cv.rectangle(self.image, (fuck[1], middley), (fuck1[1], fuck1[0]), (255, 0, 0), 3)
-                self.rectangels.append(((fuck[1], middley), (fuck1[1], fuck1[0])))
-        #exit(1488)
-        for fuck in listOfTopVertex:
-            print(fuck)
-            self.image[fuck[0]][fuck[1] + 1] = (255, 0, 0)
-            self.image[fuck[0]][fuck[1] - 1] = (255, 0, 0)
-            self.image[fuck[0] + 1][fuck[1]] = (255, 0, 0)
-            self.image[fuck[0] - 1][fuck[1]] = (255, 0, 0)
-        for fuck in listOfBottomVertex:
-            print(fuck)
-            self.image[fuck[0]][fuck[1] + 1] = (255, 0, 0)
-            self.image[fuck[0]][fuck[1] - 1] = (255, 0, 0)
-            self.image[fuck[0] + 1][fuck[1]] = (255, 0, 0)
-            self.image[fuck[0] - 1][fuck[1]] = (255, 0, 0)
+        for i in range(0, len(listOfBottomVertex) - 1, 1):
+            leftVertex = listOfBottomVertex[i]
+            rightVertex = listOfBottomVertex[i + 1]
+            self.rectangels.append(((leftVertex[1], middleYvalue), (rightVertex[1], rightVertex[0])))
         for rect in self.rectangels:
-            self.colorize(rect)
-a = CoordinatesGenerator("/Users/Retard/PycharmProjects/MotionDetector/pics/pic1.png", open("/Users/Retard/PycharmProjects/MotionDetector/pics/fuck.txt", 'w'), )
+            if self.colorize(rect):
+                self.createLogRect(rect, True)
+            else:
+                self.createLogRect(rect, False)
+
+    def createLogRect(self, rectangle, isOccupated):
+        if isOccupated:
+            prefix = "occupatedLot"
+        else:
+            prefix = "freeLot"
+        min_y = min(rectangle[0][1], rectangle[1][1])
+        min_x = min(rectangle[0][0], rectangle[1][0])
+        max_x = max(rectangle[0][0], rectangle[1][0])
+        max_y = max(rectangle[0][1], rectangle[1][1])
+        name = f"{prefix}:{rectangle}"
+        os.makedirs(f"{self.storeFolderPath}/{name}")
+        cannyRect = self.canny[min_y : max_y, min_x : max_x]
+        originalImageRect = self.rawImage[min_y : max_y, min_x : max_x]
+        open_cv.imwrite(f"{self.storeFolderPath}/{name}/canny.bmp", cannyRect)
+        open_cv.imwrite(f"{self.storeFolderPath}/{name}/orig.jpg", originalImageRect)
+
+
+a = LotsDetector("/Users/Retard/PycharmProjects/MotionDetector/testpICS/test7.jpg",
+                 open("/Users/Retard/PycharmProjects/MotionDetector/pics/log.txt", 'w'),
+                         "/Users/Retard/PycharmProjects/MotionDetector/logs")
 a.generate()
